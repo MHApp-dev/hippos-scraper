@@ -2,16 +2,14 @@
   "name": "hippos-scraper",
   "version": "1.0.0",
   "type": "module",
-  "private": true,
-  "engines": { "node": ">20" },
+  "engines": { "node": ">=18" },
   "scripts": {
-  "start": "node server.js",
-  "build:render": "./render-build.sh"
-  "postinstall": "PUPPETEER_CACHE_DIR=/opt/render/.cache/puppeteer npx puppeteer@22.15.0 browsers install chrome@stable"
-},
+    "start": "node server.js",
+    "postinstall": "puppeteer browsers install chrome"
+  },
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.19.2",
-    "puppeteer-core": "^22.15.0"
+    "puppeteer": "^22.15.0"
   }
 }
