@@ -3,9 +3,10 @@
   "version": "1.0.0",
   "type": "module",
   "private": true,
-  "engines": { "node": ">=18" },
+  "engines": { "node": ">20" },
   "scripts": {
   "start": "node server.js",
+  "build:render": "./render-build.sh"
   "postinstall": "PUPPETEER_CACHE_DIR=/opt/render/.cache/puppeteer npx puppeteer@22.15.0 browsers install chrome@stable"
 },
   "dependencies": {
