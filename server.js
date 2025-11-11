@@ -1,81 +1,95 @@
 import express from "express";
-import cors from "cors";
-import puppeteer from "puppeteer";
+import * as path from "path";
+import * as fs from "fs";
+import puppeteer from "puppeteer-core";
 
-const UA =
-  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+const app = express();
+const PORT = process.env.PORT || 10000;
 
-function launch() {
+// ---- Chrome polun hakija Renderistä ----
+function resolveChromePath() {
+  // 1) Ympäristömuuttujat sallitaan, jos annat ne itse
+  if (process.env.CHROME_PATH && fs.existsSync(process.env.CHROME_PATH)) {
+    return process.env.CHROME_PATH;
+  }
+  if (process.env.GOOGLE_CHROME_BIN && fs.existsSync(process.env.GOOGLE_CHROME_BIN)) {
+    return process.env.GOOGLE_CHROME_BIN;
+  }
+
+  // 2) Renderin välimuisti: /opt/render/.cache/puppeteer/chrome/linux-<ver>/chrome
+  const cacheDir = process.env.PUPPETEER_CACHE_DIR || "/opt/render/.cache/puppeteer";
+  const chromeRoot = path.join(cacheDir, "chrome");
+  try {
+    const entries = fs.readdirSync(chromeRoot, { withFileTypes: true })
+      .filter(d => d.isDirectory() && d.name.startsWith("linux-"))
+      .map(d => d.name)
+      .sort()
+      .reverse(); // uusin ensin
+    if (entries.length > 0) {
+      const bin = path.join(chromeRoot, entries[0], "chrome");
+      if (fs.existsSync(bin)) return bin;
+    }
+  } catch (_) { /* ignore */ }
+
+  // 3) Viimeinen fallback: yleisimmät polut kontissa
+  const candidates = [
+    "/opt/google/chrome/chrome",
+    "/usr/bin/google-chrome",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser"
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
+async function launchBrowser() {
+  const executablePath = resolveChromePath();
+  if (!executablePath) {
+    throw new Error("Chrome not found. Ensure render-build.sh ran and PUPPETEER_CACHE_DIR is set.");
+  }
   return puppeteer.launch({
+    executablePath,
     headless: "new",
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
-    // Renderissa on järjestelmä-Chrome -> käytä kanavaa
-    channel: "chrome"
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-gpu",
+      "--no-zygote",
+      "--single-process"
+    ],
+    defaultViewport: { width: 1200, height: 800 }
   });
 }
 
-
-const app = express();
-app.use(cors());
-
-// ping
-app.get("/health", (_req, res) => res.status(200).send("ok"));
-
-// ---- hevossivu ----
-async function scrapeHorse(url) {
-  const browser = await launch();
+// ---- testireitit ----
+app.get("/smoke", async (req, res) => {
   try {
-    const page = await browser.newPage();
-    await page.setUserAgent(UA);
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
-
-    const text = await page.evaluate(() => document.body.innerText);
-
-    // apurit
-    const m = (re) => {
-      const r = text.match(re);
-      return r ? r[1] : null;
-    };
-    const toDec = (s, def = "99,9") =>
-      (s || def).replace(/[^\d,]/g, "");
-
-    // karkea poiminta mobiilisivulta
-    const recordKm = toDec(m(/Ennätys\s*([0-9]{2},[0-9])/i));
-    const earningsStr = (m(/Voittosumma\s*([0-9.\s]+)\s*€/i) || "0")
-      .replace(/\s|\./g, "");
-    const earnings = Number(earningsStr) || 0;
-
-    // 5 viimeisintä (jos ei löydy, nollat)
-    let last5 = "0,0,0,0,0";
-    const lastRows = text
-      .split("\n")
-      .filter((l) => /Sijoit|Sij\.|sijat/i.test(l))
-      .slice(0, 5)
-      .map((l) => {
-        const mm = l.match(/(^|\s)(\d+)(\s|$)/);
-        return mm ? mm[2] : "0";
-      });
-    if (lastRows.length === 5) last5 = lastRows.join(",");
-
-    // paras km mobiilisivulta (jos löytyy)
-    const bestKm = toDec(m(/(\d{2},\d)\s*[ak]ly?/i));
-
-    return { recordKm, earnings, last5, bestKm };
-  } finally {
-    await browser.close();
-  }
-}
-
-app.get("/horse", async (req, res) => {
-  try {
-    const { url } = req.query;
-    if (!url) return res.status(400).json({ error: "url required" });
-    const data = await scrapeHorse(url);
-    res.json(data);
+    const p = resolveChromePath();
+    res.json({ ok: true, chromePath: p || null });
   } catch (e) {
-    res.status(500).json({ error: String(e?.message || e) });
+    res.status(500).json({ ok: false, error: String(e) });
   }
 });
 
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log("listening", PORT));
+// Esimerkki scraping-endpoint. Pidä tämä yksinkertaisena kunnes data toimii.
+app.get("/api/ping", (req, res) => res.json({ ok: true }));
+
+// Tee yksi oikea renderöinti savutestiä varten
+app.get("/api/smoke-page", async (req, res) => {
+  try {
+    const browser = await launchBrowser();
+    const page = await browser.newPage();
+    await page.goto("https://example.com", { waitUntil: "domcontentloaded" });
+    const title = await page.title();
+    await browser.close();
+    res.json({ ok: true, title });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e) });
+  }
+});
+
+app.listen(PORT, () => {
+  console.log("listening", PORT);
+});
