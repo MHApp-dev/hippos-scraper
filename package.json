@@ -1,12 +1,14 @@
 {
   "name": "hippos-scraper",
-  "version": "1.0.0",
+  "private": true,
   "type": "module",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
+    "cors": "^2.8.5",
     "express": "^4.19.2",
-    "puppeteer": "^23.6.0"
+    "lru-cache": "^10.2.2",
+    "undici": "^6.19.8"
   }
 }
