@@ -9,9 +9,11 @@ function launch() {
   return puppeteer.launch({
     headless: "new",
     args: ["--no-sandbox", "--disable-setuid-sandbox"],
-    executablePath: puppeteer.executablePath()
+    // Renderissa on järjestelmä-Chrome -> käytä kanavaa
+    channel: "chrome"
   });
 }
+
 
 const app = express();
 app.use(cors());
