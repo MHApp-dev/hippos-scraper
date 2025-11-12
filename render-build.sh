@@ -1,12 +1,12 @@
-##!/usr/bin/env bash
+#!/usr/bin/env bash
 set -e
 
-# Varmista Puppeteerin välimuistin sijainti Renderissä
+# Talletetaan Chrome Renderin pysyvään välimuistiin
 export PUPPETEER_CACHE_DIR=/opt/render/.cache/puppeteer
+mkdir -p "$PUPPETEER_CACHE_DIR"
 
-# Asenna tuotantoriippuvuudet
-npm ci || npm install
-
-# Esiasenna Chrome Renderin välimuistiin (pysyvä levy)
-# Valittu Puppeteer 22-sarja, joka tukee @puppeteer/browsers -installeria.
-npx puppeteer@22.15.0 browsers install chrome@stable
+# Asenna Chrome (Puppeteer-tiimin virallinen asentaja)
+# Luo hakemistoon .../puppeteer/chrome/... binäärin "chrome"
+npx -y @puppeteer/browsers@2.2.4 \
+  install chrome@stable \
+  --path="$PUPPETEER_CACHE_DIR"
