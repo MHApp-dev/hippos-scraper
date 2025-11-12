@@ -1,79 +1,87 @@
 import express from "express";
 import cors from "cors";
-import fs from "fs";
-import path from "path";
-import puppeteer from "puppeteer-core";
+import { fetch } from "undici";
+import * as cheerio from "cheerio";
 
 const app = express();
 app.use(cors());
 
-const CACHE_ROOT = process.env.PUPPETEER_CACHE_DIR || "/opt/render/.cache/puppeteer";
+// apu: siivoa tekstit
+const t = (s) => (s ?? "").replace(/\s+/g, " ").trim();
 
-// Etsi Chromen polku: ympäristömuuttujat → Renderin välimuisti → tavalliset järjestelmäpolut
-function findChrome(root = CACHE_ROOT) {
-  const candidates = [
-    process.env.PUPPETEER_EXECUTABLE_PATH,
-    process.env.GOOGLE_CHROME_BIN,
-    "/opt/google/chrome/chrome",
-    "/usr/bin/google-chrome",
-    "/usr/bin/chromium",
-    "/usr/bin/chromium-browser",
-  ].filter(Boolean);
-
-  for (const p of candidates) if (p && fs.existsSync(p)) return p;
-
-  if (!fs.existsSync(root)) return null;
-
-  // Kevyt rekursiivinen haku välimuistin alla (syvyys ≤ 4)
-  const stack = [{ dir: root, depth: 0 }];
-  while (stack.length) {
-    const { dir, depth } = stack.pop();
-    if (depth > 4) continue;
-    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-      const full = path.join(dir, e.name);
-      if (e.isDirectory()) stack.push({ dir: full, depth: depth + 1 });
-      else if (e.isFile() && e.name === "chrome") return full;
-    }
-  }
-  return null;
-}
-
-async function getBrowser() {
-  const executablePath = findChrome();
-  if (!executablePath) {
-    throw new Error(`Chrome not found under ${CACHE_ROOT}`);
-  }
-  return puppeteer.launch({
-    executablePath,
-    headless: "new",
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-gpu",
-      "--no-zygote",
-      "--single-process"
-    ],
-  });
-}
-
-// Terveystarkastus: näyttää mitä polkua käytetään
-app.get("/api/health", (req, res) => {
-  res.json({ ok: true, chromePath: findChrome() });
-});
-
-// Savutesti: käy Example.comissa
-app.get("/api/ping", async (req, res) => {
+// --- HEVOSEN STARTIT ---
+// GET /api/horse/:id  -> { name, last5, bestKm, earnings, recordKm }
+app.get("/api/horse/:id", async (req, res) => {
   try {
-    const browser = await getBrowser();
-    const page = await browser.newPage();
-    await page.goto("https://example.com", { waitUntil: "domcontentloaded" });
-    const title = await page.title();
-    await browser.close();
-    res.json({ ok: true, title });
+    const id = req.params.id; // esimerkki: 8266450424076291334
+    const url = `https://heppa.hippos.fi/mobiili/horses/${id}/races`;
+    const html = await (await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" }})).text();
+    const $ = cheerio.load(html);
+
+    // Nimi
+    const name = t($("h1, .header h1, .title h1").first().text()) || t($("title").text()).split("-")[0];
+
+    // Viimeiset 5 suoritusta: poimi rivitaulukosta tulos/sijoitus, rajaa 5
+    const last5 = $("table tr")
+      .map((_, tr) => t($(tr).find("td").eq(2).text() || $(tr).find("td").eq(1).text()))
+      .get()
+      .filter(Boolean)
+      .slice(0, 5)
+      .join(",");
+
+    // Paras km-aika: etsi ”rekord” tai sarake jossa km-aika, poimi minimi
+    const kmCandidates = $("table tr").map((_, tr) => {
+      const cells = $(tr).find("td").map((__, td) => t($(td).text())).get();
+      const km = cells.find((x) => /^\d{1,2}\.\d$/.test(x)); // esim 28.7
+      return km || null;
+    }).get().filter(Boolean);
+    const bestKm = kmCandidates.length ? kmCandidates.sort((a,b)=>parseFloat(a)-parseFloat(b))[0] : null;
+
+    // Ansaintaa ja ”recordKm”: hae labelien mukaan
+    let earnings = null, recordKm = null;
+    $("*").each((_, el) => {
+      const txt = t($(el).text().toLowerCase());
+      if (!earnings && /ansiot|earnings|€/.test(txt)) {
+        const m = txt.match(/([\d\s.,]+)\s*€/);
+        if (m) earnings = m[1].replace(/\s/g,"");
+      }
+      if (!recordKm && /rekord|record/.test(txt)) {
+        const m = txt.match(/(\d{1,2}\.\d)/);
+        if (m) recordKm = m[1];
+      }
+    });
+
+    res.json({ ok: true, id, name, last5, bestKm, earnings, recordKm, source: url });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e) });
   }
 });
+
+// --- AJAJAN TILASTOT ---
+// GET /api/driver/:id -> { name, winPct }
+app.get("/api/driver/:id", async (req, res) => {
+  try {
+    const id = req.params.id; // esimerkki: 8012132832531633249
+    const url = `https://heppa.hippos.fi/mobiili/people/${id}/driver`;
+    const html = await (await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" }})).text();
+    const $ = cheerio.load(html);
+
+    const name = t($("h1, .header h1, .title h1").first().text()) || t($("title").text()).split("-")[0];
+
+    // Etsi voittoprosentti, tyypillisesti ”Voittoprosentti 12 %” tms.
+    let winPct = 0;
+    const txt = $("body").text();
+    const m = txt.match(/(\d{1,2}(?:[.,]\d)?)\s*%/);
+    if (m) winPct = parseFloat(m[1].replace(",", "."));
+
+    res.json({ ok: true, id, name, winPct, source: url });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e) });
+  }
+});
+
+// savutesti
+app.get("/health", (req, res) => res.json({ ok: true }));
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log("listening", PORT));
