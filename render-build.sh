@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
-# Minne selain asennetaan
-export PUPPETEER_CACHE_DIR=/opt/render/.cache/puppeteer
+# Minne Puppeteer lataa Chromen Renderissä
+export PUPPETEER_CACHE_DIR="${PUPPETEER_CACHE_DIR:-/opt/render/.cache/puppeteer}"
 mkdir -p "$PUPPETEER_CACHE_DIR"
 
-# Asenna Google Chrome Renderin buildissä
-# (uusi virallinen asennin – ei vaadi puppeteer-pakettia)
-npx @puppeteer/browsers@1.9.1 install chrome@stable --path="$PUPPETEER_CACHE_DIR" -y
+# Riippuvuudet
+if command -v npm >/dev/null 2>&1; then
+  npm ci || npm install
+else
+  echo "npm not found"; exit 1
+fi
 
-# Tulosta mitä tuli
-echo "Installed Chrome to:"
-find "$PUPPETEER_CACHE_DIR" -maxdepth 3 -type f -name chrome -o -name "*chrome*" || true
+# Asenna Chrome buildissä tähän cacheen
+npx puppeteer@22.15.0 browsers install chrome@stable --path="$PUPPETEER_CACHE_DIR"
